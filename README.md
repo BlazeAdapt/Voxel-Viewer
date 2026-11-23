@@ -20,7 +20,7 @@ The terrain is generated from two images:
 - `C1W.png` – Colour map defining the surface colour of each location.
 - `D1.png` – Grayscale height map defining terrain elevation.
 
-These maps are taken from the game [comanche](https://en.wikipedia.org/wiki/Comanche_(video_game_series))
+These maps are taken from the game [comanche](https://en.wikipedia.org/wiki/Comanche_(video_game_series)).
 The height map is resized to 1024 × 1024 pixels, with the colour map providing corresponding terrain colours with light already shaded in.
 
 For each vertical screen column, the renderer samples terrain points at progressively increasing distances from the camera. Their screen positions are calculated using terrain elevation, camera height, viewing angle and distance.
