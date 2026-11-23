@@ -3,7 +3,7 @@
 A real-time 3D-like terrain renderer built with Python using the **Voxel Space algorithm** which transforms 2D height and colour maps into an explorable (practically a 2.5D)
  landscape without relying on traditional 3D rendering engines.
 <br>
-[Try the web demo](http://localhost:8000)
+[Try the web demo](https://voxel-terrain.vercel.app)
 
 ## Features
 
