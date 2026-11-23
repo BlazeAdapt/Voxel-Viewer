@@ -1,0 +1,696 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voxel Viewer</title>
+
+<style>
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
+
+    body {
+        background: #000;
+        overflow: hidden;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        width: 100vw;
+        height: 100vh;
+    }
+
+    canvas {
+        width: 100vw;
+        height: 100vh;
+        object-fit: contain;
+        image-rendering: pixelated;
+        cursor: crosshair;
+    }
+
+    #info {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        color: white;
+        font: 13px monospace;
+        pointer-events: none;
+        opacity: 0.7;
+    }
+#hud {
+    position: fixed;
+    top: 15px;
+    left: 15px;
+    right: 15px;
+
+    display: flex;
+    justify-content: space-between;
+
+    pointer-events: none;
+    color: white;
+    font-family: monospace;
+    font-size: 13px;
+}
+
+.panel {
+    background: rgba(0, 0, 0, 0.55);
+    padding: 12px 16px;
+    line-height: 1.7;
+    border: 1px solid rgba(255,255,255,0.2);
+}
+
+.panel h3 {
+    margin-bottom: 6px;
+    color: #8cff9b;
+    font-size: 14px;
+}
+
+.stats {
+    text-align: right;
+}
+</style>
+</head>
+
+<body>
+
+<canvas id="screen" width="1920" height="1080"></canvas>
+<div id="hud">
+
+    <div class="panel">
+        <h3>CONTROLS</h3>
+        <div>WASD — Movement</div>
+        <div>Mouse — Camera</div>
+        <div>Arrow Keys — Rotation / Pitch</div>
+        <div>SPACE — Jump</div>
+        <div>P / L — Height</div>
+        <div>Q — Sprint</div>
+        <div>ESC — Release Mouse</div>
+	<div>F — Fly </div>
+    </div>
+
+    <div class="panel stats">
+        <h3>CAMERA DATA</h3>
+        <div>Position X: <span id="posx">0</span></div>
+        <div>Position Y: <span id="posy">0</span></div>
+        <div>Height: <span id="ht">0</span></div>
+        <div>Rotation: <span id="rot">0</span></div>
+        <div>Pitch: <span id="pane">0</span></div>
+        <div>Velocity X: <span id="velx">0</span></div>
+        <div>Velocity Y: <span id="vely">0</span></div>
+        <div>Airborne: <span id="airborne">false</span></div>
+<div>Flying: <span id="flying">OFF</span></div>
+    </div>
+
+</div>
+<div id="info">Click to capture mouse | ESC to release</div>
+
+<script>
+
+// ==========================================
+// INITIALIZATION
+// ==========================================
+
+const canvas = document.getElementById("screen");
+const ctx = canvas.getContext("2d", {
+    alpha: false
+});
+
+const WIDTH = 1920;
+const HEIGHT = 1080;
+
+const SIZE = 1024;
+
+const imageData = ctx.createImageData(WIDTH, HEIGHT);
+const pixels = imageData.data;
+
+let colorMap;
+let heightMap;
+
+let loaded = false;
+
+function updateHUD() {
+
+    document.getElementById("posx").textContent = posx.toFixed(2);
+    document.getElementById("posy").textContent = posy.toFixed(2);
+document.getElementById("flying").textContent =
+    flying ? "ON" : "OFF";
+    document.getElementById("ht").textContent = ht.toFixed(2);
+
+    document.getElementById("rot").textContent =
+        (rot * 180 / Math.PI).toFixed(2) + "°";
+
+    document.getElementById("pane").textContent =
+        (pane * 180 / Math.PI).toFixed(2) + "°";
+
+    document.getElementById("velx").textContent = velx.toFixed(2);
+    document.getElementById("vely").textContent = vely.toFixed(2);
+
+    document.getElementById("airborne").textContent = airborne;
+}
+// ==========================================
+// LOAD IMAGES
+// ==========================================
+
+function loadImage(src) {
+
+    return new Promise((resolve, reject) => {
+
+        const img = new Image();
+
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+
+        img.src = src;
+    });
+}
+
+function convertImage(img, grayscale = false) {
+
+    const c = document.createElement("canvas");
+
+    c.width = SIZE;
+    c.height = SIZE;
+
+    const cctx = c.getContext("2d", {
+        willReadFrequently: true
+    });
+
+    cctx.drawImage(img, 0, 0, SIZE, SIZE);
+
+    const data = cctx.getImageData(
+        0, 0, SIZE, SIZE
+    ).data;
+
+    if (grayscale) {
+
+        const result = new Uint8Array(SIZE * SIZE);
+
+        for (let i = 0; i < result.length; i++) {
+            result[i] = data[i * 4];
+        }
+
+        return result;
+    }
+
+    const result = new Uint8Array(SIZE * SIZE * 3);
+
+    for (let i = 0; i < SIZE * SIZE; i++) {
+
+        result[i * 3] = data[i * 4];
+        result[i * 3 + 1] = data[i * 4 + 1];
+        result[i * 3 + 2] = data[i * 4 + 2];
+
+    }
+
+    return result;
+}
+
+async function initialize() {
+
+    const [colorImg, heightImg] = await Promise.all([
+        loadImage("C1W.png"),
+        loadImage("D1.png")
+    ]);
+
+    colorMap = convertImage(colorImg);
+    heightMap = convertImage(heightImg, true);
+
+    loaded = true;
+
+    requestAnimationFrame(gameLoop);
+}
+
+initialize().catch(error => {
+    console.error("Failed to load terrain:", error);
+    document.getElementById("info").textContent =
+        "Failed to load terrain images. Check filenames and use a local server.";
+});
+
+
+// ==========================================
+// CAMERA / MOVEMENT VARIABLES
+// ==========================================
+
+let posx = 435.0;
+let posy = 245.0;
+
+let ht = 75.0;
+
+let pane = 0.0;
+let rot = 0.0;
+
+let velx = 0;
+let vely = 0;
+let velz = 0;
+
+const acch = 25;
+const friction = 12.5;
+const g = 0.25;
+const vjump = 3;
+
+let flying = false;
+let airborne = false;
+let jcooldown = 0;
+
+
+// ==========================================
+// INPUT
+// ==========================================
+
+const keys = {};
+
+document.addEventListener("keydown", e => {
+
+    keys[e.code] = true;
+
+    if ([
+        "ArrowUp", "ArrowDown",
+        "ArrowLeft", "ArrowRight",
+        "Space"
+    ].includes(e.code)) {
+        e.preventDefault();
+    }
+
+});
+
+document.addEventListener("keyup", e => {
+    keys[e.code] = false;
+});
+
+
+// Mouse pointer lock
+
+canvas.addEventListener("click", () => {
+
+    canvas.requestPointerLock();
+
+    soundUnlocked = true;
+
+});
+
+document.addEventListener("mousemove", e => {
+
+    if (document.pointerLockElement !== canvas)
+        return;
+
+    rot += e.movementX / 100;
+    pane += e.movementY / 100;
+
+});
+
+
+// ==========================================
+// SOUND
+// ==========================================
+
+const walksound = new Audio("walksound.wav");
+
+walksound.loop = true;
+walksound.volume = 0;
+
+let soundUnlocked = false;
+
+let currentVolume = 0;
+
+function updateSound(dt) {
+
+    const moving = velx !== 0 || vely !== 0;
+
+    const targetVolume = moving
+        ? (airborne ? 0.1 : 1.0)
+        : 0;
+
+    const fadeSpeed = dt / 500;
+
+    if (moving && soundUnlocked && walksound.paused) {
+
+        walksound.play().catch(() => {});
+
+    }
+
+    if (currentVolume < targetVolume) {
+
+        currentVolume = Math.min(
+            targetVolume,
+            currentVolume + fadeSpeed
+        );
+
+    } else {
+
+        currentVolume = Math.max(
+            targetVolume,
+            currentVolume - fadeSpeed
+        );
+
+    }
+
+    walksound.volume = currentVolume;
+
+    if (!moving && currentVolume <= 0.001) {
+
+        currentVolume = 0;
+        walksound.pause();
+
+    }
+
+}
+
+
+// ==========================================
+// HEIGHT MAP ACCESS
+// ==========================================
+
+function getHeight(x, y) {
+
+    const ix = Math.floor(x) & 1023;
+    const iy = Math.floor(y) & 1023;
+
+    return heightMap[iy * SIZE + ix];
+
+}
+
+
+// ==========================================
+// VOXEL SPACE RENDERER
+// ==========================================
+
+function drawimg() {
+
+    const viewlen = WIDTH;
+    const viewh = HEIGHT;
+
+    const dbig = viewlen / 2;
+
+    const angle = Math.tan(pane);
+
+    const sinRot = Math.sin(rot);
+    const cosRot = Math.cos(rot);
+
+    // Fill sky
+
+    for (let i = 0; i < WIDTH * HEIGHT; i++) {
+
+        const p = i * 4;
+
+        pixels[p] = 135;
+        pixels[p + 1] = 150;
+        pixels[p + 2] = 255;
+        pixels[p + 3] = 255;
+
+    }
+
+    // Render each vertical column
+
+    for (let x = 0; x < viewlen; x++) {
+
+        let horizon = 0;
+
+        const num = x / viewlen;
+
+        for (let dist = 1; dist < dbig; dist++) {
+
+            const length = (0.5 - num) * dist * 2;
+
+            const my = Math.trunc(
+                posy - (length * sinRot + dist * cosRot)
+            ) & 1023;
+
+            const mx = Math.trunc(
+                posx + (dist * sinRot - length * cosRot)
+            ) & 1023;
+
+            const terrainHeight = heightMap[
+                my * SIZE + mx
+            ];
+
+            let yend = HEIGHT - (
+                HEIGHT / 2
+                - dbig * angle
+                + (ht - terrainHeight) * dbig / dist
+            );
+
+            if (yend < horizon)
+                yend = horizon;
+
+            yend = Math.min(yend, HEIGHT);
+
+            // Get terrain colour
+
+            const ci = (my * SIZE + mx) * 3;
+
+            const r = colorMap[ci];
+            const green = colorMap[ci + 1];
+            const b = colorMap[ci + 2];
+
+            // Draw vertical terrain section
+
+            const start = Math.max(0, Math.floor(horizon));
+            const end = Math.min(HEIGHT, Math.trunc(yend));
+
+            for (let k = start; k < end; k++) {
+
+                // Bottom-up screen coordinates
+                const screenY = HEIGHT - 1 - k;
+
+                const p = (screenY * WIDTH + x) * 4;
+
+                pixels[p] = r;
+                pixels[p + 1] = green;
+                pixels[p + 2] = b;
+                pixels[p + 3] = 255;
+
+            }
+
+            horizon = yend;
+
+            if (horizon >= HEIGHT - 1)
+                break;
+
+        }
+
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+
+}
+
+
+// ==========================================
+// GAME UPDATE
+// ==========================================
+
+function update(dt) {
+
+    // Preserve original per-frame movement values
+    // dt is measured in milliseconds.
+
+    const frameScale = dt / (1000 / 60);
+
+    if (keys["KeyS"])
+        vely -= acch * frameScale;
+
+    if (keys["KeyW"])
+        vely += acch * frameScale;
+
+    if (keys["KeyA"])
+        velx -= acch * frameScale;
+
+    if (keys["KeyD"])
+        velx += acch * frameScale;
+
+    if (keys["KeyF"] && !fPressed) {
+    flying = !flying;
+    fPressed = true;
+    }
+
+    if (!keys["KeyF"]) {
+    fPressed = false;
+    }
+
+    // Friction
+
+    if (vely !== 0) {
+
+        vely -= friction *
+            Math.sign(vely) * frameScale;
+
+        if (Math.abs(vely) < friction * frameScale)
+            vely = 0;
+
+    }
+
+    if (velx !== 0) {
+
+        velx -= friction *
+            Math.sign(velx) * frameScale;
+
+        if (Math.abs(velx) < friction * frameScale)
+            velx = 0;
+
+    }
+
+
+    // Speed limit
+
+    const velmax = keys["KeyQ"] ? 200 : 100;
+
+    vely = Math.min(velmax, Math.max(-velmax, vely));
+    velx = Math.min(velmax, Math.max(-velmax, velx));
+
+
+    // Camera movement
+
+    posx += (
+        vely * Math.sin(rot) +
+        velx * Math.cos(rot)
+    ) / 100 * frameScale;
+
+    posy += (
+        velx * Math.sin(rot) -
+        vely * Math.cos(rot)
+    ) / 100 * frameScale;
+
+
+    posx = (posx + 1024) % 1024;
+    posy = (posy + 1024) % 1024;
+
+
+    // Camera pitch
+
+    if (keys["ArrowUp"])
+        pane -= 0.1 * frameScale;
+
+    if (keys["ArrowDown"])
+        pane += 0.1 * frameScale;
+
+
+    // Camera height
+
+    if (keys["KeyP"])
+        ht += 2 * frameScale;
+
+    if (keys["KeyL"])
+        ht -= 2 * frameScale;
+
+
+    // Camera rotation
+
+    if (keys["ArrowLeft"])
+        rot -= 0.1 * frameScale;
+
+    if (keys["ArrowRight"])
+        rot += 0.1 * frameScale;
+
+
+    // Jumping
+
+    const groundHeight = getHeight(posx, posy);
+
+    airborne = ht >= groundHeight + 11;
+
+    if (
+        keys["Space"] &&
+        !airborne &&
+        !jcooldown
+    ) {
+
+        velz += vjump;
+        jcooldown = 10;
+
+    }
+
+
+    // Gravity
+
+    velz -= g * frameScale;
+
+
+    if (!airborne && jcooldown > 0)
+        jcooldown -= frameScale;
+
+
+    // Ground collision
+    if(flying){
+velz = 0;
+	ht = Math.max(groundHeight + 10.0,ht);
+	}
+    else{
+    ht = Math.max(
+        groundHeight + 10.0,
+        ht + velz * frameScale
+    );
+	}
+
+
+    if (ht <= groundHeight + 10) {
+
+        velz = 0;
+        airborne = false;
+
+    }
+
+
+    // Limit pitch
+
+    pane = Math.max(
+        -Math.PI / 3,
+        Math.min(Math.PI / 3, pane)
+    );
+
+
+    // Sound
+
+    updateSound(dt);
+
+}
+
+
+// ==========================================
+// MAIN LOOP
+// ==========================================
+
+const FIXED_DT = 1000 / 60;
+
+let lastTime = 0;
+let accumulator = 0;
+
+function gameLoop(timestamp) {
+
+    if (!loaded)
+        return;
+
+    if (!lastTime)
+        lastTime = timestamp;
+
+    let frameTime = timestamp - lastTime;
+
+    lastTime = timestamp;
+
+    // Avoid giant update jumps after tab switching
+    frameTime = Math.min(frameTime, 100);
+
+    accumulator += frameTime;
+
+    while (accumulator >= FIXED_DT) {
+
+        update(FIXED_DT);
+
+        accumulator -= FIXED_DT;
+
+    }
+
+    // Render
+
+    drawimg();
+    updateHUD();
+    requestAnimationFrame(gameLoop);
+
+}
+
+</script>
+
+</body>
+</html>
